@@ -1,0 +1,31 @@
+# Python environments and generated caches (at any depth)
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# External dependency: clone the pinned upstream revision and apply our patch
+/raspieyes/
+
+# Local benchmark output; keep experiment code and configuration tracked
+/benchmark/
+*.log
+
+# Local recordings
+/recordings/
+
+# Dependencies and build output from the upstream website
+node_modules/
+.next/
+
+# Local environment settings
+.env
+.env.*
+!.env.example
+
+# Operating-system generated files
+.DS_Store
+Thumbs.db

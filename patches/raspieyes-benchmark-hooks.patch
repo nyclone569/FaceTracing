@@ -1,0 +1,290 @@
+diff --git a/eye_renderer.py b/eye_renderer.py
+index 3f03cfe..57d40e0 100644
+--- a/eye_renderer.py
++++ b/eye_renderer.py
+@@ -311,25 +311,34 @@ def audio_thread(audio_state):
+ # Detection thread
+ # ---------------------------------------------------------------------------
+ 
++def _detection_event(args, event, **fields):
++    """Optional benchmark hook; normal runs need no observer."""
++    observer = getattr(args, "detection_observer", None)
++    if observer is not None:
++        observer({"event": event, "monotonic_s": time.monotonic(), **fields})
++
++
+ def detection_loop(tracking, args):
+-    """Background thread: MediaPipe face + MOG2 motion hybrid detection."""
++    """Detection + original double EMA, with optional experiment hooks.
++
++    Defaults preserve automatic detector selection and motion fallback.
++    A runner can select a detector, inject capture, measure stages, and stop.
++    """
+     import cv2
+     from eye_tracker import (
+         detect_face_position, load_haar_cascade,
+         detect_all_motion_positions, create_motion_detector,
+         setup_picamera, setup_webcam, grab_frame, cleanup_source,
+     )
+-    from tracker import CentroidTracker
+-
+-    # --- Initialize detectors ---
+-    bg_subtractor = create_motion_detector()
+-    centroid_tracker = CentroidTracker(
+-        max_disappeared=75,
+-        max_distance=180,
+-        process_noise=0.05,
+-        measurement_noise=0.5,
+-        presence_timeout=PRESENCE_TIMEOUT,
+-    )
++
++    requested_backend = getattr(args, "detector_backend", "auto")
++    if requested_backend not in ("auto", "mediapipe", "dnn", "haar"):
++        raise ValueError(f"Unknown detector backend: {requested_backend}")
++    if args.detection_fps <= 0:
++        raise ValueError("detection_fps must be positive")
++    motion_fallback = getattr(args, "motion_fallback", True)
++    stop_event = getattr(args, "stop_event", None)
++    bg_subtractor = create_motion_detector() if motion_fallback else None
+ 
+     # Try MediaPipe first (much better than Haar), fall back to Haar
+     use_mediapipe = False
+@@ -337,13 +346,17 @@ def detection_loop(tracking, args):
+     face_detector = None
+ 
+     try:
++        if requested_backend not in ("auto", "mediapipe"):
++            raise ImportError("MediaPipe skipped by explicit detector selection")
+         import mediapipe as mp
+         # Find model file
+         script_dir = os.path.dirname(os.path.abspath(__file__))
+         model_path = os.path.join(script_dir, "blaze_face_short_range.tflite")
+         if not os.path.isfile(model_path):
+             raise FileNotFoundError(f"Model not found: {model_path}")
+-        base_options = mp.tasks.BaseOptions(model_asset_path=model_path)
++        base_options = mp.tasks.BaseOptions(
++            model_asset_path=model_path, delegate=mp.tasks.BaseOptions.Delegate.CPU,
++        )
+         options = mp.tasks.vision.FaceDetectorOptions(
+             base_options=base_options,
+             min_detection_confidence=0.5,
+@@ -352,21 +365,30 @@ def detection_loop(tracking, args):
+         mp_face_detector = mp.tasks.vision.FaceDetector.create_from_options(options)
+         use_mediapipe = True
+         print("[detector] MediaPipe face detection initialized", flush=True)
+-    except (ImportError, Exception) as e:
+-        print(f"[detector] MediaPipe unavailable ({e}), trying OpenCV DNN...", flush=True)
++    except Exception as e:
++        if requested_backend == "mediapipe":
++            raise RuntimeError(f"Requested MediaPipe detector failed: {e}") from e
++        if requested_backend == "auto":
++            print(f"[detector] MediaPipe unavailable ({e}), trying OpenCV DNN...", flush=True)
+ 
+     # Try OpenCV DNN face detector (much better than Haar, works on Pi)
+     dnn_net = None
+-    if not use_mediapipe:
++    if not use_mediapipe and requested_backend in ("auto", "dnn"):
+         script_dir = os.path.dirname(os.path.abspath(__file__))
+         prototxt = os.path.join(script_dir, "deploy.prototxt")
+         caffemodel = os.path.join(script_dir, "res10_300x300_ssd_iter_140000_fp16.caffemodel")
+         if os.path.isfile(prototxt) and os.path.isfile(caffemodel):
+             try:
+                 dnn_net = cv2.dnn.readNetFromCaffe(prototxt, caffemodel)
++                dnn_net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
++                dnn_net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
+                 print("[detector] OpenCV DNN face detection initialized", flush=True)
+             except Exception as e2:
++                if requested_backend == "dnn":
++                    raise RuntimeError(f"Requested DNN detector failed: {e2}") from e2
+                 print(f"[detector] OpenCV DNN failed ({e2}), trying Haar...", flush=True)
++        elif requested_backend == "dnn":
++            raise FileNotFoundError("OpenCV DNN model files are missing")
+ 
+     # Last resort: Haar cascade
+     if not use_mediapipe and dnn_net is None:
+@@ -374,37 +396,62 @@ def detection_loop(tracking, args):
+             face_detector = load_haar_cascade()
+             print("[detector] Haar cascade fallback initialized", flush=True)
+         except RuntimeError:
++            if requested_backend == "haar":
++                raise
+             print("[detector] No face detector available, motion-only", flush=True)
+ 
++    actual_backend = "mediapipe" if use_mediapipe else "dnn" if dnn_net is not None else "haar" if face_detector is not None else "none"
++    if actual_backend == "none" and not motion_fallback:
++        raise RuntimeError("No usable face detector; motion fallback is disabled")
++    _detection_event(args, "detector_ready", backend=actual_backend)
++
+     use_webcam = args.test_webcam
+     cap_w = getattr(args, "capture_width", 640)
+     cap_h = getattr(args, "capture_height", 480)
+-    if use_webcam:
+-        source = setup_webcam(cap_w, cap_h)
+-    else:
+-        source = setup_picamera(cap_w, cap_h)
++    source_factory = getattr(args, "capture_factory", None)
++    try:
++        if source_factory is not None:
++            source = source_factory(cap_w, cap_h)
++        elif use_webcam:
++            source = setup_webcam(cap_w, cap_h)
++        else:
++            source = setup_picamera(cap_w, cap_h)
++    except BaseException:
++        if mp_face_detector is not None:
++            mp_face_detector.close()
++        raise
++    _detection_event(args, "capture_ready")
+ 
+     frame_interval = 1.0 / args.detection_fps
+     print(f"[detector] Running at {args.detection_fps} fps, {cap_w}x{cap_h}", flush=True)
+ 
+-    warmup_frames = args.detection_fps * 2
+-    warmup_count = 0
+-    learning_rate = 0.01
+-
+     last_face_time = 0.0  # monotonic time of last face detection
+     # Double-EMA cascade: stage1 (fast) → stage2 (smooth) — like a 2nd order filter
+     s1_x, s1_y, s1_w = 0.0, 0.0, 0.0  # stage 1: fast tracking
+     s2_x, s2_y, s2_w = 0.0, 0.0, 0.0  # stage 2: smooth output
+     prev_x, prev_y = 0.0, 0.0          # last emitted position (for dead zone)
+     DEAD_ZONE = 0.02  # ignore movements smaller than this (~7px)
++    failed_reads = 0
++    frame_index = 0
+ 
+     try:
+-        while True:
++        while stop_event is None or not stop_event.is_set():
+             t0 = time.monotonic()
+             frame = grab_frame(source, use_webcam)
++            captured_at = time.monotonic()  # Host receipt, not sensor exposure time.
+             if frame is None:
+-                time.sleep(frame_interval)
++                failed_reads += 1
++                _detection_event(args, "capture_failure", consecutive=failed_reads)
++                limit = getattr(args, "max_failed_reads", None)
++                if limit is not None and failed_reads >= limit:
++                    raise RuntimeError(f"Camera returned no frame {failed_reads} times")
++                if stop_event is None:
++                    time.sleep(frame_interval)
++                else:
++                    stop_event.wait(frame_interval)
+                 continue
++            failed_reads = 0
++            frame_index += 1
+ 
+             if use_webcam:
+                 gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+@@ -419,19 +466,25 @@ def detection_loop(tracking, args):
+             h, w = gray.shape[:2]
+ 
+             # Feed MOG2 every frame (maintains background model for motion fallback)
+-            mask = bg_subtractor.apply(gray, learningRate=0.01)
++            mask = bg_subtractor.apply(gray, learningRate=0.01) if motion_fallback else None
+ 
+             # --- Face detection (primary) ---
+             face_result = None
++            confidence = None
++            face_count = None
++            detection_started = time.monotonic()
++            thread_cpu_started = time.thread_time()
+ 
+             if use_mediapipe and mp_face_detector is not None:
+                 # MediaPipe tasks API needs mp.Image
+                 import mediapipe as mp
+                 mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+                 results = mp_face_detector.detect(mp_image)
++                face_count = len(results.detections)
+                 if results.detections:
+                     # Pick the highest-confidence detection
+                     best = max(results.detections, key=lambda d: d.categories[0].score)
++                    confidence = float(best.categories[0].score)
+                     bbox = best.bounding_box
+                     # Bounding box center normalized to [-1, 1]
+                     bcx = (bbox.origin_x + bbox.width / 2.0) / w
+@@ -454,12 +507,16 @@ def detection_loop(tracking, args):
+                 detections = dnn_net.forward()
+                 best_conf = 0.0
+                 best_box = None
++                face_count = 0
+                 for i in range(detections.shape[2]):
+                     conf = float(detections[0, 0, i, 2])
++                    if conf > 0.5:
++                        face_count += 1
+                     if conf > 0.5 and conf > best_conf:
+                         best_conf = conf
+                         best_box = detections[0, 0, i, 3:7]
+                 if best_box is not None:
++                    confidence = best_conf
+                     x1, y1, x2, y2 = best_box
+                     cx = (x1 + x2) / 2.0
+                     cy = (y1 + y2) / 2.0
+@@ -476,6 +533,10 @@ def detection_loop(tracking, args):
+                     min_face_size=20,
+                 )
+ 
++            detection_finished = time.monotonic()
++            detection_thread_cpu_ms = (time.thread_time() - thread_cpu_started) * 1000.0
++            target_source = "face" if face_result is not None else "none"
++
+             # --- Double-EMA + dead zone: smooth AND responsive ---
+             if face_result is not None:
+                 nx, ny, nw = face_result
+@@ -500,9 +561,10 @@ def detection_loop(tracking, args):
+                 # No face — try motion detection (hands, bodies, movement)
+                 motion_blobs = detect_all_motion_positions(
+                     bg_subtractor, gray, w, h,
+-                    min_contour_area=300, _mask_cache=mask,
+-                )
++                    min_contour_area=args.min_contour_area, _mask_cache=mask,
++                ) if motion_fallback else []
+                 if motion_blobs:
++                    target_source = "motion"
+                     biggest = max(motion_blobs, key=lambda b: b[2])
+                     cx_px, cy_px, blob_w = biggest
+                     nx = (cx_px / w - 0.5) * 2.0
+@@ -517,17 +579,43 @@ def detection_loop(tracking, args):
+                     prev_x, prev_y = s2_x, s2_y
+                     last_face_time = time.monotonic()
+                 elif time.monotonic() - last_face_time < PRESENCE_TIMEOUT:
++                    target_source = "held"
+                     pass  # hold last position
+                 else:
+                     tracking.update("idle")
+ 
++            filtered = tracking.get()
++            completed_at = time.monotonic()
++            _detection_event(
++                args, "frame", frame_index=frame_index, backend=actual_backend,
++                capture_received_s=captured_at, completed_s=completed_at,
++                frame_width=w, frame_height=h,
++                capture_wait_ms=(captured_at - t0) * 1000.0,
++                preprocessing_ms=(detection_started - captured_at) * 1000.0,
++                detection_stage_ms=(detection_finished - detection_started) * 1000.0,
++                detection_calling_thread_cpu_ms=detection_thread_cpu_ms,
++                host_frame_to_target_ms=(completed_at - captured_at) * 1000.0,
++                cycle_work_ms=(completed_at - t0) * 1000.0,
++                face_detected=face_result is not None, face_count=face_count,
++                confidence=confidence, target_source=target_source,
++                raw_target=list(map(float, face_result)) if face_result is not None else None,
++                filtered_target={"state": filtered[0], "x": float(filtered[1]),
++                                 "y": float(filtered[2]), "face_width": float(filtered[3]),
++                                 "updated_s": filtered[4]},
++            )
+             elapsed = time.monotonic() - t0
+             sleep_time = frame_interval - elapsed
+             if sleep_time > 0:
+-                time.sleep(sleep_time)
++                if stop_event is None:
++                    time.sleep(sleep_time)
++                else:
++                    stop_event.wait(sleep_time)
+ 
++    except EOFError:
++        _detection_event(args, "source_ended")
+     except Exception as e:
+         print(f"[detector] Error: {e}", flush=True)
++        _detection_event(args, "error", message=str(e))
+         import traceback
+         traceback.print_exc()
+     finally:
