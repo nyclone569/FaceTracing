@@ -54,7 +54,7 @@ class RunnerTests(unittest.TestCase):
 
     def test_dnn_benchmark_records_each_rate_without_rendering(self):
         result = self.execute("benchmark", "--mode", "benchmark", "--video", str(self.video),
-                              "--detector", "dnn", "--perception-only")
+                              "--detector", "dnn", "--perception-only", "--rates", "5", "10", "15")
         self.assertEqual(result["status"], "completed")
         self.assertEqual([r["config"]["detection_fps"] for r in result["runs"]], [5, 10, 15])
         for run in result["runs"]:

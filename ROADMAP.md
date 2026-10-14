@@ -2,7 +2,9 @@
 
 Ngày tạo: 2026-10-13
 
-Trạng thái: đã triển khai công cụ và chạy thử mouse/webcam/benchmark trên laptop; M0–M1 vẫn đang kiểm chứng, phiên benchmark hiện mới có lượt 5 FPS.
+Trạng thái cập nhật 2026-10-14: công cụ kiểm chứng laptop và public GitHub branch đã có; M0–M1 đang thực hiện, M2 có phần chuẩn bị dữ liệu. Chưa có milestone M0–M8 nào đạt toàn bộ điều kiện hoàn thành. Phiên benchmark webcam hiện mới có lượt 5 FPS.
+
+Phạm vi hiện tại: kiểm chứng tính khả thi và độ ổn định của luồng model trên **webcam laptop, CPU local** trước khi mua thiết bị. Raspberry Pi/camera của helmet và phép đo trên thiết bị đích defer đến M8. Video ghi sẵn, annotation chính thức và chia tập tuning/evaluation sẽ bổ sung sau; không chặn thử nghiệm webcam ban đầu.
 
 Cập nhật 2026-10-14: đã thêm laptop runner cho bước 5–6 tại [experiments/run_raspieyes.py](experiments/run_raspieyes.py), cấu hình và JSON metrics. Xem [hướng dẫn và điểm nối RoboEyes](experiments/README.md). Đây là công cụ kiểm chứng baseline; milestone chỉ được đánh dấu khi có đủ bằng chứng theo tiêu chí bên dưới.
 
@@ -11,6 +13,7 @@ Quyết định quản lý source: `raspieyes/` được ignore trong repo chín
 ## Cách sử dụng
 
 - `[ ]`: chưa hoàn thành; `[x]`: đã hoàn thành và có bằng chứng kiểm chứng.
+- Checklist gộp được tách khi mới hoàn thành một phần, để phân biệt smoke test, chạy thực tế và đánh giá chất lượng.
 - Chỉ đánh dấu milestone khi đạt các điều kiện hoàn thành của milestone đó.
 - Ghi cấu hình, kết quả, hạn chế và quyết định vào phần nhật ký cuối tài liệu.
 - Các tần số và ngưỡng trong roadmap là mục tiêu thử nghiệm, chưa phải hiệu năng đã đo.
@@ -51,51 +54,81 @@ Camera → CV → Face Tracking → Attention Engine
 
 ## Tổng quan milestone
 
-| Hoàn thành | Milestone | Kết quả chính | Phụ thuộc |
+| Hoàn thành | Milestone | Hiện trạng / phần còn thiếu | Phụ thuộc |
 |---|---|---|---|
-| [ ] | M0 — Protocol và baseline | Bộ tình huống, cấu hình, metrics có thể so sánh | — |
-| [ ] | M1 — Model trên laptop CPU | Chọn baseline detection và đo landmarking | M0 |
-| [ ] | M2 — Tracking và độ tin cậy | Theo một người; xử lý stale, mất target, camera failure | M1 |
-| [ ] | M3 — Attention cues | Kiểm chứng head orientation và event từ track history | M2 |
-| [ ] | M4 — RoboEyes và Character State Machine | Simulator animation độc lập với perception | M2; dùng cues M3 khi sẵn sàng |
-| [ ] | M5 — Interaction lock | Acquire, giữ và release một target có giải thích | M3, M4 |
-| [ ] | M6 — Nhiều người và attention competition | Chống đổi target ngoài ý muốn | M5 |
-| [ ] | M7 — Môi trường và degraded behavior | Low light, occlusion, frame drop; camera motion theo scope riêng | M6 |
-| [ ] | M8 — Raspberry Pi 5 và quyết định camera | Benchmark thiết bị đích, chọn hướng phần cứng bằng dữ liệu | M7; phần cứng được phép sử dụng |
+| [ ] | M0 — Protocol và baseline | Có metadata, pinned Raspieyes/model và RoboEyes stable, hướng dẫn và phương pháp đo; cần ghi điều kiện webcam trực tiếp/kiểm tra license. Video và thiết bị helmet defer | — |
+| [ ] | M1 — Model trên laptop CPU | Toàn bộ checkpoint M1 kiểm chứng trên laptop. Có MediaPipe webcam, smoke test DNN và JSON metrics; thiếu DNN live, Face Landmarker, các lượt đủ thời lượng và điều tra CPU cao | M0 |
+| [ ] | M2 — Tracking và độ tin cậy | Đã kiểm tra detection → EMA/dead zone → target và schema log; chưa có track ID, freshness policy và kiểm chứng mất dấu/camera failure đầy đủ | M1 |
+| [ ] | M3 — Attention cues | Chưa triển khai head pose, attention proxy hoặc event từ track history | M2 |
+| [ ] | M4 — RoboEyes và Character State Machine | Có seam TargetSnapshot/AnimationIntent và Raspieyes backend; chưa có RoboEyes adapter hoặc Character State Machine | M2; dùng cues M3 khi sẵn sàng |
+| [ ] | M5 — Interaction lock | Chưa triển khai scoring, observe/interact hoặc acquire/hold/release policy | M3, M4 |
+| [ ] | M6 — Nhiều người và attention competition | Chưa kiểm chứng association, target competition hoặc interaction lock nhiều người | M5 |
+| [ ] | M7 — Môi trường và degraded behavior | Có xử lý lỗi/signal ở runner; chưa kiểm chứng các tình huống môi trường và recovery của character | M6 |
+| [ ] | M8 — Raspberry Pi 5 và quyết định camera | Chưa benchmark trên Pi; camera/accelerator chưa chốt | M7; phần cứng được phép sử dụng |
 
 M0–M5 tạo baseline hành vi trên laptop. M6–M7 tăng độ phức tạp và kiểm chứng tính ổn định. M8 xác nhận khả năng chạy trên thiết bị đích.
 
+## Công cụ và quản lý project — đã hoàn thành
+
+- [x] Tạo [runner Python](experiments/run_raspieyes.py) cho mouse, webcam và benchmark 5/10/15 FPS; có config riêng.
+- [x] Ghi JSON gồm metadata, detector thực tế, stage timings, completed FPS, process CPU/RSS và target samples; có checkpoint và lưu khi dừng.
+- [x] Tách [TargetSnapshot → AnimationIntent → RaspieyesBackend](experiments/raspieyes_adapter.py) để thấy điểm nối perception/animation; chưa thay bằng RoboEyes.
+- [x] Tạo 8 kiểm tra kỹ thuật cho thống kê, JSON, render headless, DNN/MediaPipe trên video giả lập, lỗi nguồn và signal shutdown.
+- [x] Kiểm chứng cài lại từ upstream checkout sạch + patch; 8 tests pass ở cấu trúc tái tạo này.
+- [x] Ignore dependency local `raspieyes/`, Python environment/cache và dữ liệu `benchmark/` trong repo cha.
+- [x] Lưu [patch benchmark hooks](patches/raspieyes-benchmark-hooks.patch) và [hướng dẫn clone/apply/install](experiments/README.md).
+- [x] Commit và push baseline lên [public branch feat/laptop-benchmark](https://github.com/nyclone569/FaceTracing/tree/feat/laptop-benchmark), commit [1bf2fa0](https://github.com/nyclone569/FaceTracing/commit/1bf2fa01ff9a93719b67e3db45cfcd12626f4054).
+
+Các checkpoint công cụ không thay thế tiêu chí chất lượng, scenario coverage và hiệu năng của M0–M8.
+
 ## M0 — Chuẩn bị protocol và baseline
 
-- [ ] Ghi CPU, OS, số core/thread, webcam, chế độ nguồn và phiên bản Python dự kiến.
-- [ ] Chốt commit Raspieyes, RoboEyes, phiên bản MediaPipe và model assets dùng trong thử nghiệm.
+- [x] Ghi CPU, OS, logical CPU count, Python và package versions trong JSON; ghi camera index/backend, format và FPS do driver báo. Máy baseline: Core 7 240H, 16 logical CPUs, Ubuntu 24.04, Python 3.12.
+- [ ] Ghi điều kiện laptop khi thử: camera đang dùng, ánh sáng, tải nền và chế độ nguồn nếu biết. Chọn phần cứng helmet/Raspberry Pi không thuộc điều kiện hoàn thành M0 hiện tại.
+- [x] Chốt Raspieyes commit `6289af4d6430dcf1107fce94907fa3ee1fd52d7f`, MediaPipe 0.10.21 và model assets cho thử nghiệm hiện tại; JSON có checksums, repo giữ patch.
+- [x] Chọn RoboEyes stable mới nhất đã kiểm tra ngày 2026-10-14: [v1.1.2](https://github.com/FluxGarage/RoboEyes/releases/tag/v1.1.2), commit `a35185d24cc8a50ee4c8b1e558cd5d85e880e2b3`. Pin tag/commit này cho baseline M4; chưa kiểm chứng desktop adapter.
 - [ ] Kiểm tra license của code, dependencies và model trước khi chốt phương án tái sử dụng.
-- [ ] Phân biệt component đã có trong repo với chức năng còn cần bổ sung; không suy từ README rằng mọi tính năng đã hoạt động.
-- [ ] Chuẩn bị video: không người, một người, walk-by, nhìn camera, quay mặt, tiếp cận và rời đi.
-- [ ] Ghi độ phân giải, FPS, khoảng cách thử và ánh sáng; gán nhãn mốc event để đo reaction latency.
-- [ ] Tách tập dùng chỉnh tham số khỏi tập dùng đánh giá.
-- [ ] Chốt cách đo CPU, RAM, latency, completed result FPS và độ tuổi observation.
+- [x] Phân biệt component thực sự được dùng: detection chọn một face, double EMA/dead zone, TrackingState và renderer; centroid/Kalman không chạy trong detection loop hiện tại. RoboEyes/Attention/FSM vẫn là bước sau.
+- [x] Ghi capture resolution, driver-reported FPS và detection/render target/actual FPS trong benchmark JSON.
+- [ ] Ghi khoảng cách xấp xỉ và ánh sáng bằng `test_context` trong config hoặc ghi chú của phiên thử; `face_width` không phải khoảng cách vật lý đã đo.
+- [ ] Thực hiện cùng trình tự tình huống trực tiếp trên webcam: không người, một người đứng yên, di chuyển/quay mặt nhẹ, rồi rời khung hình; ghi quan sát về detection, jitter và lag.
+- [x] Định nghĩa và triển khai cách đo process CPU/RSS, stage latency, completed result FPS và tuổi frame tại host; [tài liệu metrics](experiments/README.md) ghi rõ giới hạn camera buffering, native worker CPU và reaction latency.
 
-**Điều kiện hoàn thành:** có protocol chạy lại được; mọi kết quả sau này gắn với cấu hình và phiên bản cụ thể.
+**Điều kiện hoàn thành hiện tại:** có protocol webcam đơn giản có thể lặp lại, môi trường/model được ghi rõ và hiểu giới hạn phép đo. Không yêu cầu đã mua Pi/camera hoặc có video ghi sẵn.
+
+Defer và giữ lại để bổ sung sau baseline webcam:
+
+- [ ] Chuẩn bị video không người, một người, walk-by, nhìn camera, quay mặt, tiếp cận và rời đi.
+- [ ] Gán nhãn mốc event để đo reaction latency/accuracy chính thức.
+- [ ] Tách tập dùng chỉnh tham số khỏi tập dùng đánh giá khi đã có bộ video.
+
+Các hạng mục defer không tính là đã hoàn thành và không chặn M1 kiểm chứng model trên webcam hiện tại.
 
 ## M1 — Kiểm chứng model trên laptop CPU
 
+**Tất cả checkpoint ở M1 chạy được trên laptop hiện tại.** M1 xác nhận model/pipeline có thể hoạt động trên CPU, đánh giá output và workload ban đầu. Hiệu năng, RAM, nhiệt/công suất trên Pi, chất lượng Camera Module 3/IMX500 và nhu cầu accelerator chỉ được xác nhận ở M8.
+
 - [x] Chạy baseline MediaPipe Face Detector / BlazeFace từ Raspieyes. Bằng chứng: webcam 10 FPS và benchmark 5 FPS ngày 2026-10-14, camera 0, ảnh thực tế 640×480; các phiên dừng chủ động.
-- [ ] Chạy OpenCV DNN detector trong Raspieyes làm đối chứng.
+- [x] Smoke-test OpenCV DNN và MediaPipe trên video giả lập không có face; kiểm tra DNN ở 5/10/15 FPS và chế độ perception-only bằng integration tests.
+- [ ] Chạy OpenCV DNN trên cùng webcam laptop với MediaPipe, cùng config/điều kiện/trình tự thao tác; đổi backend bằng `--detector dnn`. Đối chứng bằng video giống hệt nhau sẽ bổ sung khi có dữ liệu.
 - [x] Ghi detector thực sự hoạt động, kể cả khi fallback; không gộp kết quả khác detector. Các phiên webcam/benchmark hiện tại ghi `actual_detector=mediapipe`, motion fallback tắt.
-- [ ] Đo Face Landmarker một khuôn mặt độc lập trước khi thêm detector riêng phía trước.
-- [ ] Thử inference mục tiêu 5, 10, 15 FPS; capture khởi đầu 640×480 và mục tiêu 30 FPS nếu webcam hỗ trợ.
-- [ ] Đo perception riêng; đo lại với preview/simulator để thấy overhead hiển thị.
-- [ ] Ghi P50/P95/P99 processing latency, CPU time/inference, CPU process, peak RAM, completed FPS và dropped/skipped frames.
+- [ ] Đo `webcam → Face Landmarker (num_faces=1) → landmarks` độc lập. Task đã có detector bên trong; đo tổng chi phí detection + landmarks trước khi quyết định có cần detector ngoài. Runner hiện chưa có Face Landmarker backend.
+- [x] Chạy thử MediaPipe webcam ở detection target 5 và 10 FPS, capture thực tế 640×480; driver báo 30 FPS. Renderer giữ khoảng 30 FPS trong các phiên ngắn.
+- [ ] Chạy đủ thời lượng các lượt webcam 10/15 FPS tiếp theo; `benchmark_rates` mặc định hiện là `[10, 15]`. Có thể đo lại đủ 5/10/15 bằng `--rates 5 10 15` để so sánh nhất quán; phiên 5 FPS cũ chỉ là chạy thử ngắn.
+- [ ] Đo perception-only: camera + preprocessing + detector + filtering + metrics, tắt animation/render bằng `--perception-only`; đối chiếu phiên có renderer cùng detector/rate/config trên laptop.
+- [x] Ghi P50/P95/P99 capture/preprocessing/detection-stage/host-frame-to-target/render latency, completed FPS, process CPU và sampled RSS trong JSON. Warm-up/shutdown tách khỏi summary.
+- [ ] Trên laptop, bổ sung phép đo/đối chứng cho CPU inference tính đủ native workers, peak RAM theo run và dropped/skipped frames; số liệu hiện tại chưa bao phủ đủ. Đây là cải thiện instrumentation/profiling, không đòi hỏi mua Pi/camera mới.
+- [ ] Điều tra CPU process cao: webcam 10 FPS khoảng 1231.6%, benchmark 5 FPS khoảng 710.8% theo thang 100%=1 logical CPU; chưa xác định nguyên nhân hoặc bottleneck.
 - [ ] Đánh giá miss detection, false detection, face box jitter và ảnh hưởng của mặt nhỏ/quay nghiêng.
 - [ ] Chọn detector baseline dựa trên chất lượng và chi phí; ghi rõ giới hạn của model chưa chọn.
 
-**Điều kiện hoàn thành:** có bảng so sánh từ cùng input; xác định cấu hình khả thi để bước sang tracking. Nếu chưa đạt nhịp mong muốn, ghi bottleneck và cấu hình giảm tải trước khi cân nhắc accelerator.
+**Điều kiện hoàn thành hiện tại:** có đối chứng webcam được mô tả rõ, biết output/model ổn định đến đâu và cấu hình laptop nào có thể bước sang tracking. Chạy liên tục để kiểm tra lỗi, FPS và RAM bất thường trước khi coi baseline ổn định. Live webcam chưa bảo đảm các model nhận cùng chuỗi frame; ghi giới hạn này cho tới khi có video. Kết quả không chứng minh Pi đạt cùng FPS hoặc công suất.
 
 ## M2 — Face tracking một người và reliability tối thiểu
 
-- [ ] Kiểm tra đường dữ liệu thực tế trong Raspieyes: detection, EMA/dead zone, tracker và target output.
-- [ ] Chuẩn hóa observation: timestamp capture, timestamp result, face position/size và thông tin chất lượng sẵn có.
+- [x] Kiểm tra đường dữ liệu thực tế trong Raspieyes: detection → double EMA/dead zone → TrackingState → TargetSnapshot → baseline AnimationIntent. Chưa có multi-face track ID hoặc Kalman trong nhánh này.
+- [x] Chuẩn hóa observation cho logging: `capture_received_s`, `completed_s`, raw/filtered target, face width, confidence nếu detector có, backend và target source. Capture timestamp là lúc nhận ảnh tại host, không phải sensor exposure.
+- [ ] Hoàn thiện observation contract dùng cho Attention Engine, gồm confidence/freshness/source và liên kết track ID; schema log hiện tại mới là nền tảng.
 - [ ] Theo dõi track ID tạm thời, last-seen, position và velocity; không dùng facial identity recognition.
 - [ ] Kiểm chứng filtering bằng cả jitter và độ trễ; dùng thời gian thực khi nhịp frame thay đổi.
 - [ ] Chốt confidence gating, ngưỡng observation quá cũ và giới hạn prediction khi mất dấu.
@@ -234,6 +267,17 @@ M0–M5 tạo baseline hành vi trên laptop. M6–M7 tăng độ phức tạp v
 - Scope camera/helmet motion sau baseline.
 - Camera, accelerator và display vật lý sau benchmark thiết bị đích.
 
+## Checkpoint tiếp theo cần ưu tiên
+
+1. Chạy các lượt webcam 10/15 FPS và một phiên perception-only 10 FPS để đối chiếu với phiên có renderer; xác định nguồn CPU cao trên laptop trước khi kết luận workload phù hợp.
+2. Lặp cùng tình huống webcam trực tiếp, ghi ánh sáng/khoảng cách/chế độ nguồn nếu biết và quan sát chất lượng tracking; video có nhãn bổ sung sau.
+3. Chạy OpenCV DNN trên cùng webcam/điều kiện và triển khai phép đo Face Landmarker một người khi được yêu cầu.
+4. Hoàn thiện track identity, confidence/freshness và target loss ở M2 trước khi mở rộng attention/interaction behavior.
+
+Sau khi pipeline laptop đủ ổn định mới chuyển sang đánh giá Raspberry Pi và camera thực ở M8.
+
+Chưa có bằng chứng để đánh dấu milestone hoàn thành, chốt camera/accelerator hoặc suy hiệu năng Raspberry Pi từ các phiên laptop hiện tại.
+
 ## Sau MVP — Nhánh tùy chọn, chưa cam kết triển khai
 
 - [ ] Chỉ mở thí nghiệm LLM/VLM khi baseline có replay, metrics và bộ tình huống đánh giá.
@@ -260,3 +304,5 @@ Kiểm tra lại source/documentation ở phiên bản đã chốt khi triển k
 | 2026-10-13 | Tạo roadmap | Chưa có implementation | Context và hướng thiết kế đã thống nhất; chưa đo hiệu năng | Laptop CPU local; CV + tracking + attention + FSM + RoboEyes; defer LLM/VLM | M0 khi được yêu cầu |
 | 2026-10-14 | Runner M0–M1 | Raspieyes baseline có observer hooks; MediaPipe 0.10.21; NumPy 1.26.4; OpenCV 4.11.0.86; Pygame 2.6.1 | 8 kiểm tra kỹ thuật pass, gồm headless rendering, DNN/MediaPipe trên video giả lập, lỗi nguồn và signal shutdown | Kiểm tra kỹ thuật không xác nhận chất lượng tracking thực tế | Chạy webcam trên laptop |
 | 2026-10-14 | Chạy thử 3 modes | Core 7 240H, 16 logical CPUs; webcam 0, 640×480; render target 30 FPS; motion fallback tắt | [Mouse](benchmark/mouse_20261014T073552_832839Z.json): đo 3.54 s, render 30.23 FPS. [Webcam](benchmark/webcam_20261014T073611_103681Z.json): đo 1.97 s, detection 9.66 FPS, render 30.01 FPS. [Benchmark](benchmark/benchmark_20261014T073842_355751Z.json): mới lượt 5 FPS, đo 12.59 s, detection 4.92 FPS, render 29.94 FPS. Không ghi capture failure | Cả 3 phiên `interrupted/user_stop`. CPU process trung bình webcam 1231.6%, benchmark 710.8% theo thang 100%=1 logical CPU; nguyên nhân chưa xác định. Chưa có lượt benchmark 10/15 FPS hoặc đánh giá chất lượng có nhãn | Hoàn tất lượt 5/10/15 và so sánh perception-only; ghi quan sát trực tiếp về hướng mắt/jitter/lag |
+| 2026-10-14 | Publish baseline | Public repo nyclone569/FaceTracing; branch feat/laptop-benchmark; commit 1bf2fa0 | Runner/config/docs/patch đã push; source dependency, environment và raw benchmark JSON bị ignore. Fresh checkout + patch + project files pass 8 tests | Chưa tích hợp RoboEyes/Attention/FSM; tests dùng video giả lập không xác nhận face tracking thực tế | Tiếp tục các phép đo M0–M1 và điều tra CPU cao |
+| 2026-10-14 | Làm rõ scope M0–M1 | Laptop CPU + webcam; RoboEyes pin v1.1.2/a35185d; default benchmark rates 10/15 | Roadmap và hướng dẫn tách phép đo laptop với xác nhận thiết bị đích; config có test_context để ghi khoảng cách/ánh sáng thủ công | Pi/camera helmet và video có nhãn defer. Khoảng cách thực chưa được đo; Face Landmarker chưa triển khai; chưa có kết quả 10/15 mới | Chạy DNN/MediaPipe live và perception-only; sau đó kiểm chứng landmarks |

@@ -21,6 +21,12 @@
   "sample_interval_s": 1.0,
   "checkpoint_interval_s": 5.0,
   "seed": 42,
-  "benchmark_rates": [5, 10, 15],
+  "benchmark_rates": [10, 15],
+  "test_context": {
+    "scenario": null,
+    "approx_distance_m": null,
+    "lighting": null,
+    "power_profile": null
+  },
   "output_dir": "../benchmark"
 }

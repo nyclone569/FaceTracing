@@ -123,7 +123,22 @@ Mặc định: MediaPipe CPU, capture yêu cầu 640×480/30 FPS, detection targ
 raspieyes/.venv/bin/python experiments/run_raspieyes.py --mode benchmark
 ```
 
-Lần lượt chạy detection target 5, 10, 15 FPS; renderer giữ nguyên theo config. Tất cả run nằm trong **một JSON**. Mỗi run có warm-up riêng; detector/filter reset, camera mở lại và random seed cố định. `Q` hoặc `Ctrl+C` kết thúc cả phiên, không tự chuyển sang run kế tiếp.
+Theo config hiện tại, lần lượt chạy detection target **10, 15 FPS**; renderer giữ nguyên theo config. Tất cả run nằm trong **một JSON**. Mỗi run có warm-up riêng; detector/filter reset, camera mở lại và random seed cố định. `Q` hoặc `Ctrl+C` kết thúc cả phiên, không tự chuyển sang run kế tiếp.
+
+Chọn lượt cần chạy qua mode benchmark và `--rates`; mode webcam chỉ chạy một `--detection-fps`:
+
+```bash
+# Hai lượt, lần lượt 10 rồi 15 FPS
+raspieyes/.venv/bin/python experiments/run_raspieyes.py --mode benchmark --rates 10 15
+
+# Một lượt 15 FPS
+raspieyes/.venv/bin/python experiments/run_raspieyes.py --mode webcam --detection-fps 15
+
+# Đo lại đầy đủ ba lượt khi cần so sánh cùng protocol
+raspieyes/.venv/bin/python experiments/run_raspieyes.py --mode benchmark --rates 5 10 15
+```
+
+Các phiên 5 FPS trước đó rất ngắn; không coi lượt 10/15 mới là phần tiếp nối có cùng điều kiện của một benchmark đã hoàn tất.
 
 Ví dụ phiên ngắn hoặc chọn backend khác:
 
@@ -134,6 +149,51 @@ raspieyes/.venv/bin/python experiments/run_raspieyes.py --mode webcam --percepti
 ```
 
 `--perception-only` chạy cùng perception và sampler nhưng không vẽ mắt: dùng để so sánh chi phí với phiên bật renderer. Explicit detector sẽ báo lỗi nếu backend không chạy được, tránh fallback âm thầm. Chỉ `--detector auto` cho phép đổi backend tự động.
+
+## M1 hiện tại: kiểm chứng trên webcam laptop
+
+M0–M1 dùng laptop để kiểm tra model hoạt động, chất lượng observation, throughput và phần tải do rendering. Chọn Raspberry Pi/camera và kiểm chứng nhiệt/công suất thiết bị đích thuộc M8. Chưa cần có video ghi sẵn để bắt đầu; dữ liệu có nhãn sẽ bổ sung sau để tăng khả năng tái lập.
+
+### MediaPipe so với OpenCV DNN
+
+Thay `--detector` để chạy cùng camera bằng backend khác:
+
+```bash
+raspieyes/.venv/bin/python experiments/run_raspieyes.py --mode benchmark --rates 10 15 --detector mediapipe --duration 30 --warmup 5
+raspieyes/.venv/bin/python experiments/run_raspieyes.py --mode benchmark --rates 10 15 --detector dnn --duration 30 --warmup 5
+```
+
+Chạy lần lượt; chỉ một process mở camera tại một thời điểm. Giữ cùng camera index, resolution, renderer FPS, khoảng cách xấp xỉ, ánh sáng và trình tự động tác. JSON ghi backend thực sự chạy. Webcam live không cung cấp hai chuỗi frame giống hệt nhau, nên đây là đối chứng thực dụng ban đầu; so sánh chính xác hơn sẽ dùng video ghi sẵn sau.
+
+### Perception-only nghĩa là gì?
+
+```text
+Perception-only: webcam → detector → filtering → target + metrics
+Có renderer:    webcam → detector → filtering → target → animation → vẽ mắt + metrics
+```
+
+Ví dụ hai phiên cùng MediaPipe ở 10 FPS:
+
+```bash
+raspieyes/.venv/bin/python experiments/run_raspieyes.py --mode webcam --detector mediapipe --detection-fps 10 --duration 30 --warmup 5 --perception-only
+raspieyes/.venv/bin/python experiments/run_raspieyes.py --mode webcam --detector mediapipe --detection-fps 10 --duration 30 --warmup 5
+```
+
+Perception-only không có cửa sổ mắt; process vẫn chạy và lưu JSON. `actual_renderer_fps=null` là kết quả đúng cho chế độ này. CPU/RAM bao gồm capture, preprocessing, detector, filtering và sampler; chưa phải chi phí model inference thuần. Chênh lệch giữa hai phiên giúp đánh giá overhead rendering, nhưng có thể bao gồm ảnh hưởng scheduling/contention.
+
+### Face Landmarker độc lập
+
+Theo [MediaPipe documentation](https://developers.google.com/edge/mediapipe/solutions/vision/face_landmarker), Face Landmarker bundle đã chứa face detection và face mesh. Baseline dự kiến là `webcam → Face Landmarker (num_faces=1) → landmarks`, rồi đo chi phí bổ sung so với face detector hiện tại. Không đặt sẵn MediaPipe Face Detector/OpenCV DNN trước task nếu chưa có lý do và kiểm chứng.
+
+`Một khuôn mặt` nghĩa là bắt đầu với tối đa một face để giới hạn workload; mục tiêu tiếp theo có thể dùng landmarks cho head orientation. Landmarks không tự chứng minh eye gaze hoặc ý định tương tác. **Runner hiện chưa hỗ trợ Face Landmarker**; `--detector mediapipe` hiện là Face Detector. Phần Face Landmarker vẫn là checkpoint cần triển khai/đo riêng khi được yêu cầu.
+
+### Khoảng cách và điều kiện thử
+
+Resolution, detection/render FPS và driver-reported camera FPS đã có trong JSON. Khoảng cách vật lý và ánh sáng chưa được đo tự động. `face_width` là tỷ lệ kích thước face trong ảnh, không phải khoảng cách mét.
+
+Config có `test_context` để tự ghi `scenario`, `approx_distance_m`, `lighting` và `power_profile` trước khi chạy. Các giá trị này được giữ trong `runs[].config.test_context`. Chúng là ghi chú do người thử cung cấp; `null` nghĩa là chưa biết. Nếu khoảng cách thay đổi trong phiên, ghi mô tả diễn biến vào `scenario`, không coi một khoảng cách ban đầu là giá trị đo cho mọi frame.
+
+Trong mỗi lượt 30 giây đo, có thể dùng trình tự khởi đầu: 5 giây không người, 10 giây một người đứng yên, 10 giây di chuyển nhẹ/quay mặt, 5 giây rời khung hình. Ghi nhận miss/false detections, jitter và độ trễ cảm nhận. Đây là kiểm chứng webcam trực tiếp; reaction latency/accuracy có nhãn chính thức sẽ bổ sung sau.
 
 Để thử video ghi sẵn:
 
